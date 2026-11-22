@@ -33,9 +33,18 @@ def direction_interval(new_only, discordant, confidence):
     return [lower, upper]
 
 
+def _included(pairs):
+    """纳入统计的配对：excluded 为真（缺测/段冲突/未齐段）一律剔除。
+
+    历史手录数据没有 excluded 字段，按纳入处理，保证原来手录批次照常复验。
+    """
+    return [row for row in pairs if not row.get('excluded', False)]
+
+
 def summarize(pairs):
+    included = _included(pairs)
     both_ok = old_only = new_only = neither = 0
-    for row in pairs:
+    for row in included:
         old, new = row['old_ok'], row['new_ok']
         if old is None or new is None:
             continue
@@ -49,7 +58,9 @@ def summarize(pairs):
             neither += 1
     complete = both_ok + old_only + new_only + neither
     return {
-        'total': len(pairs), 'complete': complete, 'missing': len(pairs) - complete,
+        'total': len(included), 'registered': len(pairs),
+        'excluded': len(pairs) - len(included),
+        'complete': complete, 'missing': len(included) - complete,
         'both_ok': both_ok, 'old_only': old_only, 'new_only': new_only, 'neither': neither,
         'old_success': both_ok + old_only, 'new_success': both_ok + new_only,
         'delta_pp': (new_only - old_only) * 100 / complete if complete else None,
@@ -58,8 +69,10 @@ def summarize(pairs):
 
 def analyze(pairs, confidence):
     result = summarize(pairs)
+    included = _included(pairs)
     b, c, n = result['old_only'], result['new_only'], result['complete']
-    missing = [row for row in pairs if row['old_ok'] is None or row['new_ok'] is None]
+    missing = [row for row in included if row['old_ok'] is None or row['new_ok'] is None]
+    excluded = [row for row in pairs if row.get('excluded', False)]
     return {
         **result,
         'old_rate': result['old_success'] / n if n else None,
@@ -69,6 +82,10 @@ def analyze(pairs, confidence):
         'new_win_share': c / (b + c) if b + c else None,
         'direction_interval': direction_interval(c, b + c, confidence),
         'missing_pairs': missing,
-        'reading_orders': {order: summarize([row for row in pairs if row['reading_order'] == order])
+        'excluded_pairs': [
+            {'visitor_code': row['visitor_code'], 'reading_order': row['reading_order'],
+             'reason': row.get('exclude_reason') or '未纳入统计'} for row in excluded
+        ],
+        'reading_orders': {order: summarize([row for row in included if row['reading_order'] == order])
                            for order in ('old_first', 'new_first')},
     }

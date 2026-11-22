@@ -18,18 +18,33 @@ def snapshot_digest(snapshot):
     return hashlib.sha256(canonical.encode()).hexdigest()
 
 
+def _batch_provenance(db, study_id):
+    """当次算过的导入配对版本所依据的批次，固化进快照，补齐后仍可追溯原结果。"""
+    return db.execute('''SELECT b.id, b.source, b.sheet_kind, b.filename, b.row_count, b.status,
+                                b.imported_by, b.created_at
+                         FROM import_batches b WHERE b.study_id = %s ORDER BY b.id''',
+                      (study_id,)).fetchall()
+
+
 def enqueue(db, study_id, confidence, actor):
     study = get_study(db, study_id, lock=True)
-    rows = list_pairs(db, study_id)
+    # 纳入统计的配对版本用于计算；被排除的缺测/冲突/未齐段单独固化，保证导出可追溯。
+    all_rows = list_pairs(db, study_id)
+    rows = [row for row in all_rows if not row['excluded']]
+    excluded_rows = [
+        {key: row[key] for key in
+         ('visitor_code', 'reading_order', 'old_ok', 'new_ok', 'source', 'exclude_reason')}
+        for row in all_rows if row['excluded']]
     if not rows:
-        raise HTTPException(422, '请至少登记一条测读记录')
+        raise HTTPException(422, '请至少登记一条可纳入统计的测读记录')
     data = {'study_id': study_id, 'revision': study['revision'], 'confidence': confidence, 'method': METHOD}
     versions = db.execute('''SELECT id, code, exhibit, title, body, type_pt, line_height::float AS line_height
                              FROM label_versions WHERE id IN (%s, %s) ORDER BY id''',
                           (study['old_id'], study['new_id'])).fetchall()
     snapshot = {**data, 'study_code': study['code'], 'study_title': study['title'], 'station': study['station'],
                 'reading_task': study['reading_task'], 'old_id': study['old_id'], 'new_id': study['new_id'],
-                'versions': versions, 'pairs': rows}
+                'versions': versions, 'pairs': rows, 'excluded_pairs': excluded_rows,
+                'import_batches': _batch_provenance(db, study_id)}
     checksum = snapshot_digest(snapshot)
     present = db.execute('''SELECT id FROM analysis_runs WHERE study_id = %s AND checksum = %s
                             AND status <> 'failed' ORDER BY id DESC LIMIT 1''', (study_id, checksum)).fetchone()

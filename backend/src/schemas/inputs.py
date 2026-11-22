@@ -6,6 +6,9 @@ from src.constants.enums import Decision, Order
 
 Code = Annotated[str, StringConstraints(min_length=2, max_length=30, pattern=r'^[A-Z0-9][A-Z0-9-]+$')]
 Title = Annotated[str, StringConstraints(strip_whitespace=True, min_length=2, max_length=60)]
+Visitor = Annotated[str, StringConstraints(strip_whitespace=True, min_length=2, max_length=30,
+                                           pattern=r'^[A-Z0-9][A-Z0-9-]{1,29}$')]
+FileName = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=180)]
 
 
 class Input(BaseModel):
@@ -54,3 +57,17 @@ class RunInput(Input):
 class ReviewInput(Input):
     decision: Decision
     note: Annotated[str, StringConstraints(strip_whitespace=True, min_length=6, max_length=500)]
+
+
+class ImportRow(Input):
+    visitor_code: Visitor
+    correction_no: int = Field(ge=0)
+    reading_order: Order
+    # 缺测用 null；成功 true、未成功 false。严格类型，禁止字符串。
+    outcome: bool | None = Field(strict=True)
+
+
+class ImportSheetInput(Input):
+    source: Literal['old', 'new']
+    filename: FileName
+    rows: Annotated[list[ImportRow], Field(min_length=1, max_length=1000)]

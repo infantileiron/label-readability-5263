@@ -2,7 +2,7 @@ import { onExpired, request, sessionKey } from './api/client.js';
 import { empty, layout } from './components/common/ui.js';
 import { pollWhile } from './hooks/poll.js';
 import { loginPage } from './pages/login.js';
-import { pairForm, pairsPage } from './pages/pairs.js';
+import { importForm, pairForm, pairsPage } from './pages/pairs.js';
 import { reviewPage } from './pages/review.js';
 import { resultPage, runsPage } from './pages/runs.js';
 import { studyForm, versionForm, versionsPage } from './pages/versions.js';
@@ -11,7 +11,8 @@ import { authenticate, clearSession, loadCatalog, selectStudy, store } from './s
 import { notify, submitForm } from './utils/forms.js';
 
 const root = document.querySelector('#app');
-const editors = { study: studyForm, version: versionForm, pair: pairForm };
+const editors = { study: studyForm, version: versionForm, pair: pairForm,
+  'import-old': () => importForm('old'), 'import-new': () => importForm('new') };
 let cancelPoll = () => {};
 let renderCount = 0;
 
@@ -110,6 +111,34 @@ const actions = {
     await selectStudy(store.studyId);
     go('result', run.id);
   },
+  import: async (data, form) => {
+    const source = form.dataset.source;
+    const studyId = store.studyId;
+    const file = form.elements.file?.files?.[0];
+    if (file) {
+      const body = new FormData();
+      body.append('source', source);
+      body.append('file', file);
+      const token = sessionStorage.getItem(sessionKey) || '';
+      const res = await fetch(`/api/studies/${studyId}/imports/file`, {
+        method: 'POST', headers: { Authorization: `Bearer ${token}` }, body,
+      });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || `导入失败（${res.status}）`);
+    } else {
+      const text = (data.json_rows || '').trim();
+      if (!text) throw new Error('请选择 CSV 文件或粘贴 JSON 行');
+      let rows;
+      try { rows = JSON.parse(text); } catch { throw new Error('JSON 行格式无法解析'); }
+      if (!Array.isArray(rows) || !rows.length) throw new Error('JSON 必须是非空数组');
+      await post(`/studies/${studyId}/imports`, {
+        source, filename: `pasted-${source}-${Date.now()}.json`, rows,
+      });
+    }
+    await selectStudy(studyId);
+    store.pairFilter = 'all';
+    await render();
+    notify('交付表已导入并完成对账');
+  },
 };
 
 function logout() {
@@ -135,6 +164,8 @@ root.addEventListener('submit', event => {
       await render();
       notify('会签意见已保存');
     });
+  } else if (target.dataset.form === 'import') {
+    submitForm(event, data => actions.import(data, target));
   } else if (actions[target.dataset.form]) {
     submitForm(event, actions[target.dataset.form]);
   }

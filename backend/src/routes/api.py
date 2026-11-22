@@ -1,15 +1,18 @@
 import json
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Path, Query, Response
+from fastapi import APIRouter, Depends, File, Form, Path, Query, Response, UploadFile
 from fastapi.encoders import jsonable_encoder
 
 from src.constants.enums import Role
 from src.controllers.auth import current_user, login, require_role
 from src.controllers.studies import study_detail
 from src.models.database import connect
-from src.schemas.inputs import Credentials, PairInput, ReviewInput, RunInput, StudyInput, VersionInput
+from src.schemas.inputs import (Credentials, ImportSheetInput, PairInput, ReviewInput, RunInput,
+                                StudyInput, VersionInput)
+from src.services.csv_import import parse_sheet_csv
 from src.services.exports import pairing_csv
+from src.services.imports import import_sheet, list_batches, list_segments
 from src.services.records import add_study, add_version, save_pair
 from src.services.runs import detail, enqueue, export_data, review
 
@@ -58,6 +61,32 @@ def put_pair(study_id: int, visitor_code: Annotated[str, Path(pattern=r'^[A-Z0-9
              revision: Annotated[int, Query(ge=0)], data: PairInput, user=Depends(analyst)):
     with connect() as db:
         return save_pair(db, study_id, visitor_code, data.model_dump(mode='json'), user['username'], revision)
+
+
+@api.post('/studies/{study_id}/imports', status_code=201)
+def import_json_sheet(study_id: int, data: ImportSheetInput, user=Depends(analyst)):
+    """JSON 形式导入一份交付表（旧展签 old / 易读样张 new），供复验与自动化脚本调用。"""
+    payload = data.model_dump()
+    with connect() as db:
+        return import_sheet(db, study_id, payload['source'], payload['filename'],
+                            [{**row, 'filename': payload['filename']} for row in payload['rows']],
+                            user['username'])
+
+
+@api.post('/studies/{study_id}/imports/file', status_code=201)
+async def import_csv_sheet(study_id: int, source: Annotated[str, Form(pattern=r'^(old|new)$')],
+                           file: Annotated[UploadFile, File()], user=Depends(analyst)):
+    """上传 CSV 交付表。文件名作为批次幂等键，重传同名文件不重复计人。"""
+    content = await file.read()
+    rows = parse_sheet_csv(content, source, file.filename)
+    with connect() as db:
+        return import_sheet(db, study_id, source, file.filename, rows, user['username'])
+
+
+@api.get('/studies/{study_id}/imports')
+def get_batches(study_id: int, user=Depends(current_user)):
+    with connect() as db:
+        return {'batches': list_batches(db, study_id), 'segments': list_segments(db, study_id)}
 
 
 @api.post('/studies/{study_id}/runs', status_code=202)

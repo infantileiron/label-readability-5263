@@ -3,7 +3,7 @@ from fastapi import HTTPException
 from src.constants.enums import PAIR_LIMIT
 from src.services.audit import record
 
-PAIR_FIELDS = 'visitor_code, reading_order, old_ok, new_ok'
+PAIR_FIELDS = 'visitor_code, reading_order, old_ok, new_ok, source, excluded, exclude_reason'
 
 
 def get_study(db, study_id, lock=False):
@@ -16,6 +16,13 @@ def get_study(db, study_id, lock=False):
 
 def list_pairs(db, study_id):
     return db.execute(f'SELECT {PAIR_FIELDS} FROM reading_pairs WHERE study_id = %s ORDER BY visitor_code',
+                      (study_id,)).fetchall()
+
+
+def active_pairs(db, study_id):
+    """当次纳入统计的配对版本：排除缺测、段冲突与未齐段。"""
+    return db.execute(f'''SELECT {PAIR_FIELDS} FROM reading_pairs
+                          WHERE study_id = %s AND NOT excluded ORDER BY visitor_code''',
                       (study_id,)).fetchall()
 
 
@@ -49,18 +56,23 @@ def save_pair(db, study_id, visitor_code, data, actor, expected_revision):
         raise HTTPException(409, '批次已更新，请刷新配对记录后再提交')
     existing = db.execute(f'SELECT {PAIR_FIELDS} FROM reading_pairs WHERE study_id=%s AND visitor_code=%s',
                           (study_id, visitor_code)).fetchone()
+    if existing and existing['source'] == 'import':
+        raise HTTPException(409, '该观众来自交付表导入，请通过重新导入更正，不在手录界面修改')
     row = {'visitor_code': visitor_code, **data}
-    if row == existing:
+    comparable = {key: row[key] for key in ('visitor_code', 'reading_order', 'old_ok', 'new_ok')}
+    existing_plain = ({key: existing[key] for key in comparable} if existing else None)
+    if comparable == existing_plain:
         return {**row, 'revision': study['revision']}
     if existing is None:
         count = db.execute('SELECT count(*) AS n FROM reading_pairs WHERE study_id = %s', (study_id,)).fetchone()
         if count['n'] >= PAIR_LIMIT:
             raise HTTPException(409, f'每批最多登记 {PAIR_LIMIT} 对')
-    db.execute('''INSERT INTO reading_pairs(study_id, visitor_code, reading_order, old_ok, new_ok)
-                  VALUES (%(study_id)s, %(visitor_code)s, %(reading_order)s, %(old_ok)s, %(new_ok)s)
+    db.execute('''INSERT INTO reading_pairs(study_id, visitor_code, reading_order, old_ok, new_ok, source)
+                  VALUES (%(study_id)s, %(visitor_code)s, %(reading_order)s, %(old_ok)s, %(new_ok)s, 'manual')
                   ON CONFLICT (study_id, visitor_code) DO UPDATE SET
                     reading_order=excluded.reading_order, old_ok=excluded.old_ok,
-                    new_ok=excluded.new_ok, updated_at=now()''', {'study_id': study_id, **row})
+                    new_ok=excluded.new_ok, source='manual', excluded=false, exclude_reason=NULL,
+                    updated_at=now()''', {'study_id': study_id, **row})
     revision = db.execute('UPDATE studies SET revision=revision+1 WHERE id=%s RETURNING revision',
                           (study_id,)).fetchone()['revision']
     record(db, actor, 'pair.saved', f'{study["code"]}/{visitor_code}',

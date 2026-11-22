@@ -239,3 +239,18 @@ dialog::backdrop { background: oklch(27% .039 55 / .48); }
   .study-banner { align-items: flex-start; flex-wrap: wrap; }
 }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; } }
+
+/* 交付表导入与暂不纳入配对 */
+.import-panel { padding: 17px 19px; margin-bottom: 20px; }
+.import-panel .muted { margin: 4px 0 13px; max-width: 880px; line-height: 1.7; }
+.import-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
+.batch-table { font-size: 12.5px; }
+.batch-table td, .batch-table th { padding: 8px 12px; }
+.excluded-sheet { margin-top: 20px; }
+.excluded-sheet .warning, .import-panel .warning { margin: 0 0 12px; }
+.import-panel form label, dialog form label { display: block; margin-bottom: 12px; }
+dialog form textarea { width: 100%; font-family: var(--mono); font-size: 12px; resize: vertical; }
+@media (max-width: 720px) {
+  .import-actions { flex-direction: column; }
+  .import-actions button { width: 100%; }
+}

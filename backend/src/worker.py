@@ -25,6 +25,8 @@ def execute_one():
             if snapshot_digest(snapshot) != run['checksum'] or run['method'] != METHOD:
                 raise ValueError('invalid input checksum or method')
             result = analyze(snapshot['pairs'], run['confidence'])
+            # 快照已固定当次被排除的配对及原因，直接采用快照版本，保证可追溯。
+            result['excluded_pairs'] = snapshot.get('excluded_pairs', result.get('excluded_pairs', []))
         except Exception:
             logger.exception('Run %s failed', run['id'])
             db.execute("UPDATE analysis_runs SET status='failed', error=%s, finished_at=now() WHERE id=%s",
@@ -33,7 +35,8 @@ def execute_one():
         else:
             db.execute("UPDATE analysis_runs SET status='succeeded', result=%s, finished_at=now() WHERE id=%s",
                        (Jsonb(result), run['id']))
-            record(db, 'worker', 'analysis.completed', str(run['id']), {'complete': result['complete']})
+            record(db, 'worker', 'analysis.completed', str(run['id']),
+                   {'complete': result['complete'], 'excluded': len(result['excluded_pairs'])})
     return True
 
 

@@ -29,9 +29,14 @@ def seed():
                               ON CONFLICT (code) DO NOTHING RETURNING id''').fetchone()
         if study:
             with db.cursor() as cursor:
-                cursor.executemany('INSERT INTO reading_pairs VALUES (%s,%s,%s,%s,%s,now())',
-                                   [(study['id'], f'PD-{i:02}', 'old_first' if i % 2 else 'new_first', old, new)
-                                    for i, (old, new) in enumerate(OUTCOMES, 1)])
+                # 显式列名：迁移 002 后 reading_pairs 新增 source/excluded/exclude_reason，
+                # 手录种子数据默认 source='manual'、纳入统计，由列默认值填充。
+                cursor.executemany(
+                    '''INSERT INTO reading_pairs
+                       (study_id, visitor_code, reading_order, old_ok, new_ok, updated_at)
+                       VALUES (%s,%s,%s,%s,%s,now())''',
+                    [(study['id'], f'PD-{i:02}', 'old_first' if i % 2 else 'new_first', old, new)
+                     for i, (old, new) in enumerate(OUTCOMES, 1)])
         for table in ('accounts', 'label_versions', 'studies', 'reading_pairs', 'analysis_runs', 'signoffs', 'audit_events'):
             print(f'{table}={db.execute(f"SELECT count(*) AS n FROM {table}").fetchone()["n"]}')
 
